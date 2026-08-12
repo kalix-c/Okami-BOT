@@ -71,12 +71,10 @@ class JSONDatabase {
             { id: 3, name: 'الأبطال', total_points: 600, member_count: 2 }
         ];
 
-        // Seed some tracked manga for demo purposes
-        this.data.tracked_manga = [
-            { id: 1, title: 'Solo Leveling', url: 'https://asuracomic.net/manga/solo-leveling', source_id: 'asura', last_chapter: 179.0, auto_post: 1 }
-        ];
+        // لا يُنشأ أي عمل متابع تلقائيًا؛ تُضاف الأعمال فقط من مصدر موثّق وباختيار المسؤول.
+        this.data.tracked_manga = [];
 
-        logger.info('[JSONDatabase] Standard guilds, missions, and tracked manga seeded.');
+        logger.info('[JSONDatabase] Standard guilds and missions seeded; tracked manga starts empty.');
     }
 
     exec(sql) {

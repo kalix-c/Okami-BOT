@@ -5,22 +5,44 @@ import { config } from '../config/config.js';
 import logger from '../utils/logger.js';
 import { sendMessage } from '../services/messenger.js';
 
-const PAGE_ACCESS_TOKEN = config.facebook.accessToken;
-const PAGE_ID = config.facebook.pageId;
-const GRAPH_API_VERSION = 'v19.0';
-const BASE_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}/${PAGE_ID}`;
+function getPublisherConfig() {
+    const accessToken = config.facebook.accessToken;
+    const pageId = config.facebook.pageId;
+    const apiVersion = config.facebook.graphApiVersion || 'v26.0';
+
+    if (!accessToken || !pageId) {
+        throw new Error('إعداد النشر غير مكتمل: أضف FB_PAGE_ACCESS_TOKEN وFB_PAGE_ID. لا تُستخدم كوكيز الحسابات الشخصية.');
+    }
+
+    return {
+        accessToken,
+        pageId,
+        baseUrl: `https://graph.facebook.com/${apiVersion}/${pageId}`
+    };
+}
+
+function describeGraphError(error) {
+    if (error.response?.data?.error) {
+        const graphError = error.response.data.error;
+        return `${graphError.message || 'خطأ من Graph API'}${graphError.code ? ` (code ${graphError.code})` : ''}`;
+    }
+    return error.message;
+}
 
 export class FacebookPublisher {
-    
     static async validateToken() {
         try {
-            const response = await axios.get(`https://graph.facebook.com/me?access_token=${PAGE_ACCESS_TOKEN}`);
-            logger.info(`[Publisher] Token validated: ${response.data.name}`);
-            return true;
+            const { accessToken } = getPublisherConfig();
+            const response = await axios.get('https://graph.facebook.com/me', {
+                params: { access_token: accessToken },
+                timeout: 15000
+            });
+            logger.info(`[Publisher] Page token validated for: ${response.data.name || response.data.id}`);
+            return { valid: true, account: response.data };
         } catch (error) {
-            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-            logger.error(`[Publisher] Token validation failed: ${errorMsg}`);
-            return false;
+            const message = describeGraphError(error);
+            logger.error(`[Publisher] Token validation failed: ${message}`);
+            return { valid: false, error: message };
         }
     }
 
@@ -36,83 +58,80 @@ export class FacebookPublisher {
     }
 
     static async publishChapter(imagePaths, message) {
-        logger.info(`[Publisher] Starting to publish chapter with ${imagePaths.length} images`);
+        if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
+            throw new Error('لا يمكن النشر من دون صور فصل تم التحقق منها.');
+        }
+
+        const publisher = getPublisherConfig();
+        logger.info(`[Publisher] Starting verified chapter publish with ${imagePaths.length} image(s).`);
+        const photoIds = [];
+
+        for (const [index, imagePath] of imagePaths.entries()) {
+            const photoId = await this.uploadPhoto(imagePath, publisher);
+            photoIds.push({ media_fbid: photoId });
+            logger.info(`[Publisher] Uploaded verified image ${index + 1}/${imagePaths.length}: ${photoId}`);
+        }
+
         try {
-            const photoIds = [];
-            for (let i = 0; i < imagePaths.length; i++) {
-                const imgPath = imagePaths[i];
-                try {
-                    const photoId = await this.uploadPhoto(imgPath);
-                    photoIds.push({ media_fbid: photoId });
-                    logger.info(`[Publisher] Uploaded photo ${i+1}/${imagePaths.length}: ${photoId}`);
-                } catch (uploadError) {
-                    logger.warn(`[Publisher] Failed to upload photo ${i+1}, skipping: ${uploadError.message}`);
-                }
-            }
-
-            if (photoIds.length === 0) {
-                throw new Error("No photos were successfully uploaded.");
-            }
-
-            const url = `${BASE_URL}/feed`;
-            const payload = {
-                message: message,
+            const response = await axios.post(`${publisher.baseUrl}/feed`, {
+                message,
                 attached_media: photoIds,
-                access_token: PAGE_ACCESS_TOKEN
-            };
-
-            const response = await axios.post(url, payload);
+                published: true,
+                access_token: publisher.accessToken
+            }, { timeout: 30000 });
             logger.info(`[Publisher] Chapter published successfully: ${response.data.id}`);
             return response.data.id;
         } catch (error) {
-            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-            logger.error(`[Publisher] Chapter publishing error: ${errorMsg}`);
-            throw new Error(`Facebook Publishing Failed: ${errorMsg}`);
+            const detail = describeGraphError(error);
+            logger.error(`[Publisher] Chapter publishing error: ${detail}`);
+            throw new Error(`فشل النشر عبر Pages API: ${detail}`);
         }
     }
 
-    static async uploadPhoto(filePath) {
-        const url = `${BASE_URL}/photos`;
+    static async uploadPhoto(filePath, publisher = getPublisherConfig()) {
         const form = new FormData();
-        if (filePath.startsWith('http')) {
-            const response = await axios.get(filePath, { responseType: 'stream' });
-            form.append('source', response.data);
-        } else {
-            form.append('source', fs.createReadStream(filePath));
-        }
-        form.append('published', 'false');
-        form.append('access_token', PAGE_ACCESS_TOKEN);
-
         try {
-            const response = await axios.post(url, form, {
-                headers: { ...form.getHeaders() }
+            if (String(filePath).startsWith('http://') || String(filePath).startsWith('https://')) {
+                const source = await axios.get(filePath, { responseType: 'stream', timeout: 30000 });
+                form.append('source', source.data);
+            } else {
+                if (!fs.existsSync(filePath)) {
+                    throw new Error(`ملف الصورة غير موجود: ${filePath}`);
+                }
+                form.append('source', fs.createReadStream(filePath));
+            }
+
+            form.append('published', 'false');
+            form.append('access_token', publisher.accessToken);
+            const response = await axios.post(`${publisher.baseUrl}/photos`, form, {
+                headers: form.getHeaders(),
+                timeout: 60000
             });
             return response.data.id;
         } catch (error) {
-            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-            throw new Error(`Photo upload error: ${errorMsg}`);
+            throw new Error(`فشل رفع الصورة: ${describeGraphError(error)}`);
         }
     }
 
     static async publishCustomPost(message, imageUrl = null) {
-        try {
-            const url = imageUrl ? `${BASE_URL}/photos` : `${BASE_URL}/feed`;
-            const payload = {
-                message: message,
-                access_token: PAGE_ACCESS_TOKEN
-            };
-            
-            if (imageUrl) {
-                payload.url = imageUrl;
-            }
+        const publisher = getPublisherConfig();
+        if (!String(message || '').trim()) {
+            throw new Error('نص المنشور مطلوب.');
+        }
 
-            const response = await axios.post(url, payload);
-            logger.info(`[Publisher] Custom post published: ${response.data.id}`);
-            return response.data.id;
+        try {
+            const endpoint = imageUrl ? `${publisher.baseUrl}/photos` : `${publisher.baseUrl}/feed`;
+            const payload = { message, access_token: publisher.accessToken };
+            if (imageUrl) payload.url = imageUrl;
+
+            const response = await axios.post(endpoint, payload, { timeout: 30000 });
+            const postId = response.data.post_id || response.data.id;
+            logger.info(`[Publisher] Custom Page post published: ${postId}`);
+            return postId;
         } catch (error) {
-            const errorMsg = error.response ? JSON.stringify(error.response.data) : error.message;
-            logger.error(`[Publisher] Custom post error: ${errorMsg}`);
-            throw error;
+            const detail = describeGraphError(error);
+            logger.error(`[Publisher] Custom post error: ${detail}`);
+            throw new Error(`فشل نشر المنشور عبر Pages API: ${detail}`);
         }
     }
 }

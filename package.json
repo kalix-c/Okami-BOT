@@ -1,7 +1,7 @@
 {
   "name": "okami-bot-webhook",
   "version": "2.0.0",
-  "description": "Advanced Facebook Messenger bot for manga/manhwa search and updates - Railway Optimized",
+  "description": "Facebook Messenger assistant with verified manga metadata and official Page publishing safeguards",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -12,7 +12,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "build": "echo 'Build complete'",
-    "test": "echo 'No tests configured'"
+    "test": "node scripts/verify-verified-sources.js"
   },
   "dependencies": {
     "axios": "^1.18.1",
@@ -41,6 +41,6 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Chaouni-X0/Okami-BOT.git"
+    "url": "https://github.com/kalix-c/Okami-BOT.git"
   }
 }

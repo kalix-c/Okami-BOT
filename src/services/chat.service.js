@@ -437,6 +437,17 @@ _(تفاعل أكثر واقرأ الفصول لرفع مستواك وربح ا�
                                 .replace(/[^a-z0-9\u0600-\u06FF]+/g, '-')
                                 .replace(/^-+|-+$/g, '') || `manga-${Date.now()}`;
 
+                            if (details.metadataOnly || details.chapters.length === 0) {
+                                const chapterCount = details.totalChapters
+                                    ? `\n🔢 عدد الفصول المسجّل: ${details.totalChapters}`
+                                    : '';
+                                await sendMessage(fbId, {
+                                    text: `📖 ${details.title}\n🌐 المصدر: ${selected.sourceName || selected.sourceId}\n📝 ${details.description ? details.description.substring(0, 350) : 'لا يوجد وصف متاح.'}${chapterCount}\n\nℹ️ هذه بيانات وصفية حقيقية من مصدر موثّق، لكنها لا تتضمن صور الفصول أو روابط نشر مرخّصة؛ لذلك لم يبدأ أي نشر تلقائي.`
+                                });
+                                this.sessions.set(fbId, { step: state.isAutomation ? 'AUTOMATION_MENU' : 'DEV_MENU' });
+                                break;
+                            }
+
                             this.sessions.set(fbId, {
                                 step: 'CONFIRM_PUBLISH',
                                 details,
@@ -569,7 +580,7 @@ _(تفاعل أكثر واقرأ الفصول لرفع مستواك وربح ا�
                         QueueSystem.addChapterToQueue({
                             mangaTitle: mangaDetails.title,
                             chapterName: chapter.name,
-                            chapterNumber: chIdx + 1,
+                            chapterNumber: Number(chapter.number) || (chIdx + 1),
                             chapterUrl: chapter.url,
                             sourceKey: state.sourceId,
                             adminFbId: fbId,
